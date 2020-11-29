@@ -12,6 +12,11 @@ import (
 )
 
 func startServer(addr chan string) {
+	var foo Foo
+	if err  := geerpc.Register(&foo); err != nil {
+		log.Fatal("register error:", err)
+	}
+
 	l, err := net.Listen("tcp", ":0")
 	if err != nil {
 		log.Fatalln("network error:", err)
@@ -21,7 +26,21 @@ func startServer(addr chan string) {
 	geerpc.Accept(l)
 }
 
-func main3() {
+
+type Foo int
+
+type Args struct {
+	Num1 int
+	Num2 int
+}
+
+func (f Foo) Sum(args Args, reply  *int) error {
+	*reply = args.Num1 + args.Num2
+	return nil
+}
+
+func main() {
+	//log.SetFlags(0)
 	addr := make(chan string)
 	go startServer(addr)
 
@@ -35,18 +54,19 @@ func main3() {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			args := fmt.Sprintf("geerpc req %d", i*2)
-			var reply string
+			args := Args{i,i}
+			var reply int
 			if err := client.Call("Foo.Sum", args, &reply); err != nil {
-				log.Fatal("call Foo.Sum error:", err)
+				log.Fatal("call Foo.Sum error: ", err)
 			}
-			log.Println("reply:", reply)
+			log.Printf("%d + %d = %d", args.Num1, args.Num2, reply)
 		}(i)
 	}
 	wg.Wait()
 }
 
-func main() {
+
+func reflectDemo() {
 	var wg sync.WaitGroup
 	typ := reflect.TypeOf(&wg)
 	fmt.Printf("typ nummethod: %v\n", typ.NumMethod())
