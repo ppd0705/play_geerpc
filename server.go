@@ -192,6 +192,7 @@ func (server *Server) Register(rcvr interface{}) error {
 	if _, dup := server.serviceMap.LoadOrStore(s.name, s); dup {
 		return errors.New("rpc: service already defined: " + s.name)
 	}
+	log.Printf("rpc server: register %s", s.name)
 	return nil
 }
 
