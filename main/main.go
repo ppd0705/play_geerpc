@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"geerpc"
+	"geerpc/registry"
 	"geerpc/xclient"
 	"log"
 	"net"
@@ -28,7 +29,14 @@ func startHttpServer(addr chan string) {
 	_ = http.Serve(l, nil)
 }
 
-func startServer(addr chan string) {
+func startRegistry(wg *sync.WaitGroup) {
+	l, _ := net.Listen("tcp", ":9999")
+	registry.HandleHTTP()
+	wg.Done()
+	_ = http.Serve(l, nil)
+}
+
+func startServer(registryAddr string, wg *sync.WaitGroup) {
 	var foo Foo
 	server := geerpc.NewServer()
 	if err := server.Register(&foo); err != nil {
@@ -40,7 +48,9 @@ func startServer(addr chan string) {
 		log.Fatalln("network error:", err)
 	}
 	log.Println("start rpc server on", l.Addr())
-	addr <- l.Addr().String()
+	addr := l.Addr().String()
+	registry.Heartbeat(registryAddr, "tcp@"+addr, 0)
+	wg.Done()
 	server.Accept(l)
 }
 
@@ -62,8 +72,8 @@ func (f Foo) Sleep(args Args, reply *int) error {
 	return nil
 }
 
-func call(addr1, addr2 string) {
-	d := xclient.NewMultiServersDiscovery([]string{"tcp@" + addr1, "tcp@" + addr2})
+func call(registry string) {
+	d := xclient.NewGeeRegistryDiscovery(registry, 0)
 	client := xclient.NewXClient(d, xclient.RandomSelect, nil)
 	defer func() { _ = client.Close() }()
 
@@ -81,8 +91,8 @@ func call(addr1, addr2 string) {
 	wg.Wait()
 }
 
-func broadcast(addr1, addr2 string) {
-	d := xclient.NewMultiServersDiscovery([]string{"tcp@" + addr1, "tcp@" + addr2})
+func broadcast(registry string) {
+	d := xclient.NewGeeRegistryDiscovery(registry, 0)
 	xc := xclient.NewXClient(d, xclient.RandomSelect, nil)
 	defer func() { _ = xc.Close() }()
 	var wg sync.WaitGroup
@@ -90,7 +100,7 @@ func broadcast(addr1, addr2 string) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			foo(xc, context.Background(), "broadcaset", "Foo.Sum", &Args{i, i * i})
+			foo(xc, context.Background(), "broadcast", "Foo.Sum", &Args{i, i * i})
 			ctx, _ := context.WithTimeout(context.Background(), time.Second*2)
 			foo(xc, ctx, "broadcast", "Foo.Sleep", &Args{i, i * i})
 		}(i)
@@ -116,13 +126,18 @@ func foo(xc *xclient.XClient, ctx context.Context, typ, serviceMethod string, ar
 }
 func main() {
 	log.SetFlags(0b1111111111)
-	addrCh1 := make(chan string)
-	addrCh2 := make(chan string)
-	go startServer(addrCh1)
-	go startServer(addrCh2)
-	addr1 := <-addrCh1
-	addr2 := <-addrCh2
+	resitryAddr := "http://localhost:9999/_geerpc_/registry"
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go startRegistry(&wg)
+	wg.Wait()
+
+	time.Sleep(time.Second)
+	wg.Add(2)
+	go startServer(resitryAddr, &wg)
+	go startServer(resitryAddr, &wg)
+	wg.Wait()
 	time.Sleep(time.Second * 2)
-	call(addr1, addr2)
-	broadcast(addr1, addr2)
+	call(resitryAddr)
+	broadcast(resitryAddr)
 }
